@@ -68,40 +68,57 @@ async def message_handler(event):
     recent_messages[msg_hash] = now
 
     try:
-        sender = await event.get_chat()
-        channel_name = getattr(sender, 'title', 'Неизвестный канал')
+        chat = await event.get_chat()
+        sender = await event.get_sender()
 
+        channel_name = getattr(chat, 'title', 'Неизвестный канал')
         channel_id = event.chat_id
-        user_id = message.sender_id
 
-        # Кликабельные ссылки
-        user_link = f"[Пользователь](tg://user?id={user_id})"
-        channel_link = f"[Канал](https://t.me/c/{str(channel_id)[4:]})" if str(channel_id).startswith("-100") else f"Канал ID: {channel_id}"
-        reply_text = f"{channel_link}\n{user_link}"
+        user_name = sender.first_name
+        if sender.last_name:
+            user_name += f" {sender.last_name}"
 
+        # ссылки
+        if str(channel_id).startswith("-100"):
+            channel_link = f"https://t.me/c/{str(channel_id)[4:]}"
+        else:
+            channel_link = None
+
+        if getattr(chat, 'username', None):
+            channel_part = f"[{channel_name}](https://t.me/{chat.username})"
+        else:
+            channel_part = f"[{channel_name}]({channel_link})" if channel_link else channel_name
+
+        user_part = f"[{user_name}](tg://user?id={sender.id})"
+
+        header = f"{channel_part} | {user_part}\n\n"
+
+        # Отправляем сообщение без "переслано"
         if message.grouped_id:
-            # Пересылаем альбом как есть
             album = []
             async for m in client.iter_messages(event.chat_id, reverse=True, limit=40):
                 if m.grouped_id == message.grouped_id:
                     album.append(m)
             if album:
                 album = sorted(album, key=lambda m: m.id)
-                await client.forward_messages(target_group, album)
-                # Отправляем ответ к первому сообщению альбома
-                await client.send_message(target_group, reply_text, reply_to=album[0].id, parse_mode='md')
-                logging.info(f'✅ Переслан альбом из "{channel_name}" успешно.')
-                print(f'✅ Переслан альбом из "{channel_name}" успешно.')
+                await client.send_message(target_group, header, parse_mode="md")
+                for m in album:
+                    if m.message:
+                        await client.send_message(target_group, m.message)
+                    if m.media:
+                        await client.send_file(target_group, m.media)
         else:
-            # Пересылаем одно сообщение
-            forwarded = await client.forward_messages(target_group, message)
-            await client.send_message(target_group, reply_text, reply_to=forwarded.id, parse_mode='md')
-            logging.info(f'✅ Переслано сообщение из "{channel_name}" успешно.')
-            print(f'✅ Переслано сообщение из "{channel_name}" успешно.')
+            if message.text:
+                await client.send_message(target_group, header + message.text, parse_mode="md")
+            elif message.media:
+                await client.send_file(target_group, message.media, caption=header)
+
+        logging.info(f'✅ Сообщение из "{channel_name}" отправлено без пересылки.')
+        print(f'✅ Сообщение из "{channel_name}" отправлено без пересылки.')
 
     except Exception as e:
-        logging.error(f'❌ Ошибка пересылки: {e}')
-        print(f'❌ Ошибка пересылки: {e}')
+        logging.error(f'❌ Ошибка: {e}')
+        print(f'❌ Ошибка: {e}')
 
 
 async def main():
